@@ -1,0 +1,8 @@
+ # 基本配置
+max_width = 100                # 最大行宽
+tab_spaces = 4                 # 缩进空格数
+edition = "2021"              # Rust 版本
+newline_style = "Unix"        # 换行符风格
+
+# 导入相关
+reorder_imports = true        # 自动排序导入
