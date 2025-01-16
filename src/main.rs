@@ -1,4 +1,3 @@
-use colored::Colorize;
 use log::{debug, error, warn};
 use rustyline::error::ReadlineError;
 use rustyline::history::FileHistory;
@@ -7,8 +6,8 @@ use std::io::{self, Write};
 use std::process::Command;
 
 use crate::utils::config::Config;
-use crate::utils::theme::{load_theme, Theme};
 use crate::utils::log::init_logger;
+use crate::utils::theme::{load_theme, Theme};
 
 mod utils;
 
@@ -18,8 +17,14 @@ fn main() -> Result<()> {
     init_logger();
     debug!("配置加载成功");
 
-    println!("{}", theme.welcome_message);
-    println!("{}", "输入 'exit' 退出".bright_blue());
+    println!(
+        "{}",
+        (theme.success_style)(theme.get_message("welcome").clone())
+    );
+    println!(
+        "{}",
+        (theme.warning_style)(theme.get_message("help").clone())
+    );
 
     debug!("初始化编辑器...");
     let rl_config = RLConfig::builder()
@@ -53,7 +58,10 @@ fn main() -> Result<()> {
 
                 if line == "exit" {
                     debug!("退出 ZakoShell");
-                    println!("{}", theme.exit_message);
+                    println!(
+                        "{}",
+                        (theme.success_style)(theme.get_message("exit").clone())
+                    );
                     break;
                 }
 
@@ -61,17 +69,17 @@ fn main() -> Result<()> {
             }
             Err(ReadlineError::Interrupted) => {
                 warn!("接收到中断信号");
-                println!("\n中断信号 (Ctrl+C)");
+                println!("\n{}", theme.get_message("interrupt_signal"));
                 continue;
             }
             Err(ReadlineError::Eof) => {
                 debug!("接收到 EOF 信号");
-                println!("\n退出信号 (Ctrl+D)");
+                println!("\n{}", theme.get_message("eof_signal"));
                 break;
             }
             Err(err) => {
                 error!("发生错误: {}", err);
-                eprintln!("错误: {}", err);
+                eprintln!("{}: {}", theme.get_message("error"), err);
                 break;
             }
         }
@@ -108,17 +116,13 @@ fn execute_command(command: &str, theme: &Theme) {
                 println!(
                     "{} {}",
                     theme.success_symbol,
-                    (theme.success_style)(
-                        "哼～勉强算你做对了呢，不过也就这种程度了吧？".to_string()
-                    )
+                    (theme.success_style)(theme.get_message("command_success").clone())
                 );
             } else {
                 println!(
                     "{} {}",
                     theme.error_symbol,
-                    (theme.error_style)(
-                        "啊啦啊啦～连这么简单的命令都搞不定呢，真是个废物呢！".to_string()
-                    )
+                    (theme.error_style)(theme.get_message("command_error").clone())
                 );
             }
         }
@@ -126,11 +130,11 @@ fn execute_command(command: &str, theme: &Theme) {
             eprintln!(
                 "{} {}",
                 theme.error_symbol,
-                (theme.error_style)(format!("笨蛋！命令执行失败了啦: {}", e))
+                (theme.error_style)(format!("{}: {}", theme.get_message("execution_error"), e))
             );
             println!(
                 "{}",
-                (theme.error_style)("真是个没用的废物呢～这种程度就不行了吗？".to_string())
+                (theme.error_style)(theme.get_message("execution_error").clone())
             );
         }
     }
