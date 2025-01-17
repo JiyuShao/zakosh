@@ -1,4 +1,4 @@
-# Zago Shell
+# Zako Shell
 
 雑魚（ざこ）Shell，具有指令纠错效果，并自带嘲讽技能。使用 Rust 编写。
 

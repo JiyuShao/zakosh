@@ -1,30 +1,40 @@
 use dotenv::dotenv;
-use rustyline::EditMode;
+use shellexpand;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 pub struct Config {
+    pub name: String,
+    pub logger_level: String,
     pub theme: String,
-    pub history_file: PathBuf,
     pub editor_mode: String,
+    // paths
+    pub config_dir: PathBuf,
+    pub history_file: PathBuf,
+    pub themes_dir: PathBuf,
 }
 
 impl Config {
-    fn get_config_dir() -> PathBuf {
-        if let Ok(home) = env::var("HOME") {
-            PathBuf::from(home).join(".config/zako")
-        } else {
-            PathBuf::from("tmp")
-        }
-    }
-
     fn default() -> Self {
-        let config_dir = Self::get_config_dir();
+        let config_dir = if let Ok(dir) = env::var("ZAKO_CONFIG_DIR") {
+            if dir.starts_with("./") {
+                std::env::current_dir().unwrap().join(&dir[2..])
+            } else {
+                PathBuf::from(shellexpand::tilde(&dir).into_owned())
+            }
+        } else {
+            PathBuf::from(shellexpand::tilde("~/.config/zako").into_owned())
+        };
         Config {
+            name: String::from("zako"),
+            logger_level: String::from("info"),
             theme: String::from("default"),
-            history_file: config_dir.join(".zako_history"),
             editor_mode: String::from("vi"),
+            config_dir: config_dir.clone(),
+            history_file: config_dir.join(".zako_history"),
+            themes_dir: config_dir.join("themes"),
         }
     }
 
@@ -39,17 +49,16 @@ impl Config {
         // 默认配置
         let mut config = Config::default();
 
-        // 从环境变量加载配置
+        if let Ok(logger_level) = env::var("ZAKO_LOG") {
+            config.logger_level = logger_level;
+        }
+
         if let Ok(theme) = env::var("ZAKO_THEME") {
             config.theme = theme;
         }
 
-        if let Ok(editor) = env::var("ZAKO_EDITOR") {
+        if let Ok(editor) = env::var("ZAKO_EDITOR_MODE") {
             config.editor_mode = editor;
-        }
-
-        if let Ok(history) = env::var("ZAKO_HISTORY") {
-            config.history_file = PathBuf::from(history);
         }
 
         // 确保历史文件目录存在
@@ -59,11 +68,6 @@ impl Config {
 
         config
     }
-
-    pub fn get_edit_mode(&self) -> EditMode {
-        match self.editor_mode.to_lowercase().as_str() {
-            "emacs" => EditMode::Emacs,
-            _ => EditMode::Vi,
-        }
-    }
 }
+
+pub static CONFIG: LazyLock<Config> = LazyLock::new(Config::new);

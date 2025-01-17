@@ -1,11 +1,13 @@
 use colored::Colorize;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
+// use std::env;
+use std::path::PathBuf;
+
+use super::config::CONFIG;
 
 pub struct Theme {
-    pub prompt: String,
-    pub success_symbol: String,
-    pub error_symbol: String,
+    pub prompt_style: Box<dyn Fn(String) -> String>,
     pub success_style: Box<dyn Fn(String) -> String>,
     pub warning_style: Box<dyn Fn(String) -> String>,
     pub error_style: Box<dyn Fn(String) -> String>,
@@ -25,6 +27,12 @@ impl Theme {
 
     fn init_messages() -> HashMap<String, Vec<String>> {
         let mut messages = HashMap::new();
+        messages.insert(
+            "prompt".to_string(),
+            vec!["雑魚～> ".to_string(), "雑魚～❥ ".to_string()],
+        );
+        messages.insert("success_symbol".to_string(), vec!["♡".to_string()]);
+        messages.insert("error_symbol".to_string(), vec!["✗".to_string()]);
         messages.insert(
             "welcome".to_string(),
             vec![
@@ -126,14 +134,16 @@ impl Theme {
         );
         messages
     }
+
+    pub fn load_from_file(_path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Theme::default())
+    }
 }
 
 impl Default for Theme {
     fn default() -> Self {
         Theme {
-            prompt: "雑魚～> ".bright_cyan().to_string(),
-            success_symbol: "♡".bright_magenta().to_string(),
-            error_symbol: "✗".red().to_string(),
+            prompt_style: Box::new(|s| s.bright_purple().bold().to_string()),
             success_style: Box::new(|s| s.bright_magenta().to_string()),
             warning_style: Box::new(|s| s.yellow().to_string()),
             error_style: Box::new(|s| s.bright_red().to_string()),
@@ -143,17 +153,19 @@ impl Default for Theme {
 }
 
 pub fn load_theme(theme_name: &str) -> Theme {
-    match theme_name {
-        "default" => Theme::default(),
-        "dark" => Theme {
-            prompt: "雑魚～❥ ".bright_purple().to_string(),
-            success_symbol: "✧".bright_magenta().to_string(),
-            error_symbol: "✗".bright_red().to_string(),
-            success_style: Box::new(|s| s.bright_purple().bold().to_string()),
-            warning_style: Box::new(|s| s.bright_yellow().bold().to_string()),
-            error_style: Box::new(|s| s.bright_red().bold().to_string()),
-            messages: Theme::init_messages(),
-        },
-        _ => Theme::default(),
+    let themes_dir = CONFIG.themes_dir.clone();
+    let zsh_theme_path = PathBuf::from(&themes_dir).join(format!("{}.zsh-theme", theme_name));
+
+    if zsh_theme_path.exists() {
+        Theme::load_from_file(zsh_theme_path).unwrap_or_else(|e| {
+            eprintln!("加载主题失败，使用默认主题: {}", e);
+            Theme::default()
+        })
+    } else {
+        eprintln!(
+            "找不到主题文件，使用默认主题: {}",
+            zsh_theme_path.display()
+        );
+        Theme::default()
     }
 }
