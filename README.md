@@ -23,6 +23,20 @@
    cargo run
    ```
 
+3. 校验项目
+
+   ```bash
+   cargo clippy
+   ```
+
+4. 修复项目 & 格式化项目
+
+   ```bash
+   cargo fix
+   cargo clippy --fix
+   cargo fmt
+   ```
+
 ## 命令
 
 - `exit`: 退出 shell

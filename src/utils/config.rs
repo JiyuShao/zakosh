@@ -1,9 +1,9 @@
 use dotenv::dotenv;
+use log::error;
 use shellexpand;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
 pub struct Config {
     pub name: String,
@@ -19,8 +19,8 @@ pub struct Config {
 impl Config {
     fn default() -> Self {
         let config_dir = if let Ok(dir) = env::var("ZAKO_CONFIG_DIR") {
-            if dir.starts_with("./") {
-                std::env::current_dir().unwrap().join(&dir[2..])
+            if let Some(stripped) = dir.strip_prefix("./") {
+                env::current_dir().unwrap_or_default().join(stripped)
             } else {
                 PathBuf::from(shellexpand::tilde(&dir).into_owned())
             }
@@ -63,11 +63,11 @@ impl Config {
 
         // 确保历史文件目录存在
         if let Some(parent) = config.history_file.parent() {
-            fs::create_dir_all(parent).expect("无法创建历史记录目录");
+            if let Err(e) = fs::create_dir_all(parent) {
+                error!("无法创建历史记录目录: {}", e);
+            }
         }
 
         config
     }
 }
-
-pub static CONFIG: LazyLock<Config> = LazyLock::new(Config::new);

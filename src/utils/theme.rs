@@ -1,10 +1,10 @@
 use colored::Colorize;
+use log::{debug, error};
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
-// use std::env;
 use std::path::PathBuf;
 
-use super::config::CONFIG;
+use crate::utils::config::Config;
 
 pub struct Theme {
     pub prompt_style: Box<dyn Fn(String) -> String>,
@@ -15,14 +15,23 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn get_message(&self, key: &str) -> &String {
-        if let Some(messages) = self.messages.get(key) {
-            messages
-                .choose(&mut rand::thread_rng())
-                .unwrap_or(&messages[0])
-        } else {
-            &self.messages.get("error").unwrap()[0]
+    fn default() -> Self {
+        Theme {
+            prompt_style: Box::new(|s| s.bright_purple().bold().to_string()),
+            success_style: Box::new(|s| s.bright_magenta().to_string()),
+            warning_style: Box::new(|s| s.yellow().to_string()),
+            error_style: Box::new(|s| s.bright_red().to_string()),
+            messages: Self::init_messages(),
         }
+    }
+
+    pub fn get_message(&self, key: &str) -> String {
+        self.messages
+            .get(key)
+            .or_else(|| self.messages.get("error"))
+            .and_then(|msgs| msgs.choose(&mut rand::thread_rng()))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn init_messages() -> HashMap<String, Vec<String>> {
@@ -135,37 +144,23 @@ impl Theme {
         messages
     }
 
-    pub fn load_from_file(_path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    fn load_from_file(_path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Theme::default())
     }
-}
 
-impl Default for Theme {
-    fn default() -> Self {
-        Theme {
-            prompt_style: Box::new(|s| s.bright_purple().bold().to_string()),
-            success_style: Box::new(|s| s.bright_magenta().to_string()),
-            warning_style: Box::new(|s| s.yellow().to_string()),
-            error_style: Box::new(|s| s.bright_red().to_string()),
-            messages: Self::init_messages(),
+    pub fn load_theme(theme_name: &str, config: &Config) -> Theme {
+        let themes_dir = config.themes_dir.clone();
+        let zsh_theme_path = PathBuf::from(&themes_dir).join(format!("{}.zsh-theme", theme_name));
+
+        match Theme::load_from_file(zsh_theme_path) {
+            Ok(theme) => {
+                debug!("主题加载成功: {}", theme_name);
+                theme
+            }
+            Err(err) => {
+                error!("主题加载失败: {}", err);
+                Theme::default()
+            }
         }
-    }
-}
-
-pub fn load_theme(theme_name: &str) -> Theme {
-    let themes_dir = CONFIG.themes_dir.clone();
-    let zsh_theme_path = PathBuf::from(&themes_dir).join(format!("{}.zsh-theme", theme_name));
-
-    if zsh_theme_path.exists() {
-        Theme::load_from_file(zsh_theme_path).unwrap_or_else(|e| {
-            eprintln!("加载主题失败，使用默认主题: {}", e);
-            Theme::default()
-        })
-    } else {
-        eprintln!(
-            "找不到主题文件，使用默认主题: {}",
-            zsh_theme_path.display()
-        );
-        Theme::default()
     }
 }
