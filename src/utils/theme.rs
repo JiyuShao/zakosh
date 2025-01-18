@@ -2,6 +2,7 @@ use colored::Colorize;
 use log::{debug, error};
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
+use std::error::Error;
 use std::path::PathBuf;
 
 use crate::utils::config::Config;
@@ -144,17 +145,17 @@ impl Theme {
         messages
     }
 
-    fn load_from_file(_path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    fn load_from_file(_path: PathBuf) -> Result<Self, Box<dyn Error>> {
         Ok(Theme::default())
     }
 
-    pub fn load_theme(theme_name: &str, config: &Config) -> Theme {
+    pub fn load_theme(config: &Config) -> Theme {
         let themes_dir = config.themes_dir.clone();
-        let zsh_theme_path = PathBuf::from(&themes_dir).join(format!("{}.zsh-theme", theme_name));
+        let zsh_theme_path = PathBuf::from(&themes_dir).join(format!("{}.zsh-theme", config.theme));
 
         match Theme::load_from_file(zsh_theme_path) {
             Ok(theme) => {
-                debug!("主题加载成功: {}", theme_name);
+                debug!("主题加载成功: {}", config.theme);
                 theme
             }
             Err(err) => {
