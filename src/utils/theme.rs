@@ -1,11 +1,8 @@
 use colored::Colorize;
-use log::{debug, error};
 use rand::seq::SliceRandom;
-use std::collections::HashMap;
-use std::error::Error;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
-use crate::utils::config::Config;
+use super::config::Config;
 
 pub struct Theme {
     pub prompt_style: Box<dyn Fn(String) -> String>,
@@ -16,7 +13,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    fn default() -> Self {
+    pub fn new() -> Self {
         Theme {
             prompt_style: Box::new(|s| s.bright_purple().bold().to_string()),
             success_style: Box::new(|s| s.bright_magenta().to_string()),
@@ -145,23 +142,12 @@ impl Theme {
         messages
     }
 
-    fn load_from_file(_path: PathBuf) -> Result<Self, Box<dyn Error>> {
-        Ok(Theme::default())
-    }
-
-    pub fn load_theme(config: &Config) -> Theme {
+    pub fn get_theme_file(config: &Config) -> String {
         let themes_dir = config.themes_dir.clone();
-        let zsh_theme_path = PathBuf::from(&themes_dir).join(format!("{}.zsh-theme", config.theme));
-
-        match Theme::load_from_file(zsh_theme_path) {
-            Ok(theme) => {
-                debug!("主题加载成功: {}", config.theme);
-                theme
-            }
-            Err(err) => {
-                error!("主题加载失败: {}", err);
-                Theme::default()
-            }
-        }
+        PathBuf::from(&themes_dir)
+            .join(format!("{}.zsh-theme", config.theme))
+            .to_str()
+            .unwrap()
+            .to_string()
     }
 }

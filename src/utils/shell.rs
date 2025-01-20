@@ -22,10 +22,24 @@ pub struct Shell<'a> {
 
 impl<'a> Shell<'a> {
     pub fn new(config: &'a Config) -> Self {
+        // 执行主题文件，设置主题环境变量
+        let theme_file = Theme::get_theme_file(config);
+        match Shell::execute_command(&format!("source {}", theme_file)) {
+            Ok(status) => {
+                if !status.success() {
+                    error!("执行主题文件失败: {}", status);
+                } else {
+                    debug!("执行主题文件成功：{}", env::var("PROMPT").unwrap_or_default());
+                }
+            }
+            Err(e) => {
+                error!("执行主题文件失败: {}", e);
+            }
+        }
         Self {
             config,
             id: Uuid::new_v4(),
-            theme: Theme::load_theme(config),
+            theme: Theme::new(),
         }
     }
 
@@ -82,15 +96,41 @@ impl<'a> Shell<'a> {
             let prompt = (self.theme.prompt_style)(self.theme.get_message("prompt"));
             match rl.readline(&prompt) {
                 Ok(line) => {
-                    if !self.handle_input(rl, &line)? {
+                    if line.trim() == "exit" {
+                        debug!("退出 ZakoShell");
+                        println!(
+                            "{}",
+                            (self.theme.success_style)(self.theme.get_message("exit"))
+                        );
                         break;
                     }
+                    self.handle_input(rl, &line)?;
                 }
-                Err(err) => {
-                    if !self.handle_readline_error(err) {
+                Err(err) => match err {
+                    ReadlineError::Eof => {
+                        debug!("接收到 EOF 信号，退出 ZakoShell");
+                        println!(
+                            "\n{}",
+                            (self.theme.warning_style)(self.theme.get_message("eof_signal"))
+                        );
                         break;
                     }
-                }
+                    ReadlineError::Interrupted => {
+                        warn!("接收到中断信号");
+                        println!(
+                            "\n{}",
+                            (self.theme.warning_style)(self.theme.get_message("interrupt_signal"))
+                        );
+                    }
+                    err => {
+                        error!("发生错误: {}", err);
+                        eprintln!(
+                            "{}: {}",
+                            (self.theme.error_style)(self.theme.get_message("error")),
+                            err
+                        );
+                    }
+                },
             }
         }
         Ok(())
@@ -100,110 +140,43 @@ impl<'a> Shell<'a> {
         &self,
         rl: &mut Editor<(), FileHistory>,
         line: &str,
-    ) -> Result<bool, Box<dyn Error>> {
-        let line = shellexpand::env(line.trim())?;
-        let args = shell_words::split(&line)?;
+    ) -> Result<(), Box<dyn Error>> {
+        let args = shell_words::split(&line.trim())?;
         if args.is_empty() {
-            return Ok(true);
+            return Ok(());
         }
 
         rl.add_history_entry(line.to_string())?;
         debug!("执行命令: {}", &line);
 
+        // 处理创建子 ZakoShell
         if args[0] == self.config.name {
             let shell = Shell::new(self.config);
             shell.run()?;
-            Ok(true)
-        } else if args[0] == "exit" {
-            debug!("退出 ZakoShell");
-            println!(
-                "{}",
-                (self.theme.success_style)(self.theme.get_message("exit"))
-            );
-            Ok(false)
-        } else {
-            self.execute_command(&args)?;
-            Ok(true)
+            return Ok(());
         }
-    }
 
-    fn handle_readline_error(&self, err: ReadlineError) -> bool {
-        match err {
-            ReadlineError::Interrupted => {
-                warn!("接收到中断信号");
-                println!(
-                    "\n{}",
-                    (self.theme.warning_style)(self.theme.get_message("interrupt_signal"))
-                );
-                true
-            }
-            ReadlineError::Eof => {
-                debug!("接收到 EOF 信号");
-                println!(
-                    "\n{}",
-                    (self.theme.warning_style)(self.theme.get_message("eof_signal"))
-                );
-                false
-            }
-            err => {
-                error!("发生错误: {}", err);
-                eprintln!(
-                    "{}: {}",
-                    (self.theme.error_style)(self.theme.get_message("error")),
-                    err
-                );
-                false
-            }
-        }
-    }
-
-    fn execute_command(&self, args: &[String]) -> Result<(), Box<dyn Error>> {
-        // 处理环境变量赋值
-        if args.len() == 1 && (args[0].contains('=') || args[0].starts_with("export")) {
-            let input = &args[0];
-            let assignment = if input.starts_with("export ") {
-                input.trim_start_matches("export ").trim()
+        // 处理设置环境变量
+        if args[0].contains('=') || args[0] == "export" {
+            let vars = if args[0] == "export" {
+                args[1..].iter()
             } else {
-                input
+                args[..].iter()
             };
 
-            if let Some((name, value)) = assignment.split_once('=') {
-                let name = name.trim();
-                let value = shellexpand::env(value.trim())?;
-                let value = value.trim_matches('"').trim_matches('\'');
-                env::set_var(name, value);
-                return Ok(());
+            for var in vars {
+                if let Some((name, value)) = var.split_once('=') {
+                    let name = name.trim();
+                    let value = shellexpand::env(value.trim())?;
+                    let value = value.trim_matches('"').trim_matches('\'');
+                    env::set_var(name, value);
+                }
             }
+            return Ok(());
         }
 
-        let command_result = self
-            .create_command(&args.join(" "))
-            .env_clear()
-            .envs(env::vars())
-            .current_dir(env::current_dir().unwrap_or_default())
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status();
-
-        self.handle_command_result(command_result);
-        Ok(())
-    }
-
-    fn create_command(&self, command: &str) -> Command {
-        let (shell, args) = if cfg!(target_os = "windows") {
-            ("cmd", ["/C"])
-        } else {
-            ("sh", ["-c"])
-        };
-
-        let mut cmd = Command::new(shell);
-        cmd.args([args[0], command]);
-        cmd
-    }
-
-    fn handle_command_result(&self, result: std::io::Result<std::process::ExitStatus>) {
-        match result {
+        // 执行普通命令
+        match Shell::execute_command(&args.join(" ")) {
             Ok(status) => {
                 if status.success() {
                     println!(
@@ -231,5 +204,24 @@ impl<'a> Shell<'a> {
                 );
             }
         }
+        Ok(())
+    }
+
+    fn execute_command(command: &str) -> std::io::Result<std::process::ExitStatus> {
+        let (shell, args) = if cfg!(target_os = "windows") {
+            ("cmd", ["/C"])
+        } else {
+            ("sh", ["-c"])
+        };
+
+        let mut cmd = Command::new(shell);
+        cmd.args([args[0], command])
+            .env_clear()
+            .envs(env::vars())
+            .current_dir(env::current_dir().unwrap_or_default())
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
     }
 }
