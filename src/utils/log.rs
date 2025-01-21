@@ -3,6 +3,8 @@ use chrono::Local;
 use env_logger::{Builder, Target};
 use log::LevelFilter;
 use std::io::Write;
+use std::process;
+
 pub fn init_logger(config: &Config) {
     let level = match &config.logger_level {
         level if level.eq_ignore_ascii_case("debug") => LevelFilter::Debug,
@@ -16,7 +18,8 @@ pub fn init_logger(config: &Config) {
         .format(|buf, record| {
             writeln!(
                 buf,
-                "[{}] {} - {}",
+                "[PID:{}][{}] {} - {}",
+                process::id(),
                 record.level(),
                 Local::now().format("%Y-%m-%d %H:%M:%S"),
                 record.args()

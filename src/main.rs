@@ -11,6 +11,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logger(&config);
     debug!("配置加载成功 {}", config.config_dir.display());
 
-    let shell = Shell::new(&config);
+    let mut shell = Shell::new(&config);
     shell.run()
 }
