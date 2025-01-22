@@ -1,9 +1,10 @@
 use log::debug;
-use utils::shell::Shell;
+use crate::shell::Shell;
 
 use crate::utils::config::Config;
 use crate::utils::log::init_logger;
 
+mod shell;
 mod utils;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

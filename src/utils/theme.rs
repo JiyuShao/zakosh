@@ -147,7 +147,7 @@ impl Theme {
         PathBuf::from(&themes_dir)
             .join(format!("{}.zsh-theme", config.theme))
             .to_str()
-            .unwrap()
+            .unwrap_or_default()
             .to_string()
     }
 }
