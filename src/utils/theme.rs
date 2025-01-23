@@ -118,17 +118,6 @@ impl Theme {
             ],
         );
         messages.insert(
-            "execution_error".to_string(),
-            vec![
-                "真是个没用的废物呢～这种程度就不行了吗？".to_string(),
-                "哎呀呀～看来某人连基本的命令都掌握不好呢～".to_string(),
-                "啊啦～这就报错了？真是个脆弱的命令呢～".to_string(),
-                "哼！连这种小错误都处理不好，真是个废物呢！".to_string(),
-                "呵～就这点本事吗？真是让人失望呢～".to_string(),
-                "真是笨蛋呢～连这种简单的错误都搞不定～".to_string(),
-            ],
-        );
-        messages.insert(
             "error".to_string(),
             vec![
                 "哼～出错了呢，真是个废物呢！".to_string(),

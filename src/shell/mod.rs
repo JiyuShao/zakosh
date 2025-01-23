@@ -1,6 +1,6 @@
 mod core;
-mod variables;
-mod commands;
+mod executor;
+mod parser;
 mod readline;
 
-pub use core::Shell; 
+pub use core::Shell;
