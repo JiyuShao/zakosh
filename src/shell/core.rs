@@ -111,26 +111,20 @@ impl<'a> Shell<'a> {
                     );
                 }
                 Err(e) => {
+                    println!("{}", e);
                     eprintln!(
                         "{} {}",
                         (self.theme.error_style)(self.theme.get_message("error_symbol")),
-                        (self.theme.error_style)(format!(
-                            "{}: {}",
-                            self.theme.get_message("command_error"),
-                            e
-                        ))
+                        (self.theme.error_style)(self.theme.get_message("command_error")),
                     );
                 }
             },
             Err(e) => {
+                println!("{}", e);
                 eprintln!(
                     "{} {}",
                     (self.theme.error_style)(self.theme.get_message("error_symbol")),
-                    (self.theme.error_style)(format!(
-                        "{}: {}",
-                        self.theme.get_message("command_error"),
-                        e
-                    ))
+                    (self.theme.error_style)(self.theme.get_message("command_error")),
                 );
             }
         }
