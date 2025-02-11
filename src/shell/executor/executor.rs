@@ -1,5 +1,4 @@
 use log::debug;
-use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -7,23 +6,12 @@ use std::{env, io};
 
 use crate::shell::parser::ast::{Command as ShellCommand, Node};
 
+use super::job_manager::JobManager;
 use super::variable::Variable;
-
-#[derive(Debug)]
-pub enum JobStatus {
-    Running,
-    Stopped,
-}
-
-#[derive(Debug)]
-pub struct Job {
-    command: String,
-    status: JobStatus,
-}
 
 pub struct Executor {
     variables: Variable,
-    jobs: HashMap<u32, Job>,
+    job_manager: JobManager,
 }
 
 impl Executor {
@@ -40,7 +28,7 @@ impl Executor {
 
         Self {
             variables: Variable::new(),
-            jobs: HashMap::new(),
+            job_manager: JobManager::new(),
         }
     }
 
@@ -50,24 +38,6 @@ impl Executor {
             Node::Command(command) => self.execute_command(command),
         }
     }
-
-    // fn sigtstp_handler(&mut self) {
-    //     unsafe {
-    //         // 获取当前前台进程组
-    //         let foreground_pgid = libc::tcgetpgrp(libc::STDIN_FILENO);
-    //         if foreground_pgid == -1 {
-    //             eprintln!("Error getting foreground process group");
-    //             return;
-    //         }
-
-    //         // 暂停当前前台进程组
-    //         libc::kill(-foreground_pgid, libc::SIGTSTP);
-
-    //         // 查询并更改当前 job 状态
-    //         let job = self.jobs.get_mut(&foreground_pgid).unwrap();
-    //         job.status = JobStatus::Stopped;
-    //     }
-    // }
 
     fn execute_pipeline(&mut self, pipeline: Vec<ShellCommand>) -> io::Result<()> {
         // 暂时只处理单个命令，后续可以扩展管道功能
@@ -88,6 +58,7 @@ impl Executor {
         // 执行外部命令
         debug!("执行外部命令: {:?}", command);
         let program = command.program;
+        let original_args = command.arguments.clone();
         let args: Vec<String> = command
             .arguments
             .iter()
@@ -126,12 +97,16 @@ impl Executor {
             .spawn()?;
 
         let pid = child.id();
-        self.jobs.insert(
+        self.job_manager.add_job(
             pid,
-            Job {
-                command: program.clone(),
-                status: JobStatus::Running,
-            },
+            program.clone()
+                + " "
+                + original_args
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .as_str(),
         );
 
         #[cfg(unix)]
@@ -158,19 +133,18 @@ impl Executor {
                     _ => {
                         if libc::WIFSTOPPED(status) {
                             // 子进程被暂停（SIGTSTP）
-                            if let Some(job) = self.jobs.get_mut(&pid) {
-                                job.status = JobStatus::Stopped;
+                            if let Some(job) = self.job_manager.mark_suspended(pid) {
                                 // 打印提示信息
-                                println!("\n[{}] Stopped\t{}", pid, job.command);
+                                println!("\n{}", job);
                             }
                             break;
                         } else if libc::WIFEXITED(status) {
                             // 子进程正常退出
-                            self.jobs.remove(&pid);
+                            self.job_manager.remove_job(pid);
                             break;
                         } else if libc::WIFSIGNALED(status) {
                             // 子进程被信号终止
-                            self.jobs.remove(&pid);
+                            self.job_manager.remove_job(pid);
                             // 如果是被信号终止，打印一个换行，因为信号处理可能打断了输出
                             println!();
                             break;
@@ -260,73 +234,89 @@ impl Executor {
     }
 
     fn builtin_jobs(&self) -> io::Result<()> {
-        for (pid, job) in &self.jobs {
-            let status = match job.status {
-                JobStatus::Running => "Running",
-                JobStatus::Stopped => "Stopped",
-            };
-            println!("[{}] {} \t{}", pid, status, job.command);
+        for job in &self.job_manager.get_jobs() {
+            println!("{}", job);
         }
         Ok(())
     }
 
     fn builtin_fg(&mut self, command: &ShellCommand) -> io::Result<()> {
-        let pid = command
-            .arguments
-            .first()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "需要指定作业 ID"))?
-            .parse::<u32>()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "无效的作业 ID"))?;
-
-        if let Some(job) = self.jobs.get_mut(&pid) {
-            // 添加：更新作业状态
-            job.status = JobStatus::Running;
-
-            #[cfg(unix)]
-            unsafe {
-                // 将作业设置为前台进程组
-                libc::tcsetpgrp(0, pid as libc::pid_t);
-                // 发送 SIGCONT 信号继续执行
-                libc::kill(-(pid as libc::pid_t), libc::SIGCONT);
-
-                // 添加：等待前台进程完成或停止
-                let mut status: libc::c_int = 0;
-                libc::waitpid(-(pid as libc::pid_t), &mut status, libc::WUNTRACED);
-
-                // 恢复 shell 为前台进程组
-                libc::tcsetpgrp(0, libc::getpid());
-
-                // 更新作业状态
-                if libc::WIFSTOPPED(status) {
-                    job.status = JobStatus::Stopped;
+        let index =
+            if let Some(arg) = command.arguments.first() {
+                // 处理 %n 格式
+                if let Some(index_str) = arg.strip_prefix('%') {
+                    Some(index_str.parse::<usize>().map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "无效的作业编号")
+                    })?)
                 } else {
-                    self.jobs.remove(&pid);
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "fg: 参数格式错误，应为 %n",
+                    ));
                 }
+            } else {
+                None
+            };
+
+        let job = self
+            .job_manager
+            .fg(index)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "fg: 没有找到该作业"))?;
+        println!("{}", job);
+
+        let pid = job.pid;
+
+        #[cfg(unix)]
+        unsafe {
+            // 将作业设置为前台进程组
+            libc::tcsetpgrp(0, pid as libc::pid_t);
+            // 发送 SIGCONT 信号继续执行
+            libc::kill(-(pid as libc::pid_t), libc::SIGCONT);
+
+            // 等待前台进程完成或停止
+            let mut status: libc::c_int = 0;
+            libc::waitpid(-(pid as libc::pid_t), &mut status, libc::WUNTRACED);
+
+            // 恢复 shell 为前台进程组
+            libc::tcsetpgrp(0, libc::getpid());
+
+            // 更新作业状态
+            if libc::WIFSTOPPED(status) {
+                self.job_manager.mark_suspended(pid);
+            } else {
+                self.job_manager.remove_job(pid);
             }
-            Ok(())
-        } else {
-            Err(io::Error::new(io::ErrorKind::NotFound, "没有找到该作业"))
         }
+
+        Ok(())
     }
 
     fn builtin_bg(&mut self, command: &ShellCommand) -> io::Result<()> {
-        let pid = command
+        let index = command
             .arguments
             .first()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "需要指定作业 ID"))?
-            .parse::<u32>()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "无效的作业 ID"))?;
+            .and_then(|arg| arg.strip_prefix('%'))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "bg: 参数格式错误，应为 %n")
+            })?
+            .parse::<usize>()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "无效的作业编号"))?;
 
-        if let Some(job) = self.jobs.get_mut(&pid) {
-            #[cfg(unix)]
-            unsafe {
-                // 发送 SIGCONT 信号在后台继续执行
-                libc::kill(-(pid as libc::pid_t), libc::SIGCONT);
-            }
-            job.status = JobStatus::Running;
-            Ok(())
-        } else {
-            Err(io::Error::new(io::ErrorKind::NotFound, "No such job"))
+        let job = self.job_manager.bg(index).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("bg: %{}: no such job", index),
+            )
+        })?;
+        println!("{}", job);
+        let pid = job.pid;
+
+        #[cfg(unix)]
+        unsafe {
+            // 发送 SIGCONT 信号在后台继续执行
+            libc::kill(-(pid as libc::pid_t), libc::SIGCONT);
         }
+
+        Ok(())
     }
 }
