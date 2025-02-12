@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum JobStatus {
@@ -50,26 +51,31 @@ impl fmt::Display for Job {
     }
 }
 
+#[derive(Clone)]
 pub struct JobManager {
-    jobs: Vec<Job>,
+    inner: Arc<Mutex<Vec<Job>>>,
 }
 
 impl JobManager {
     pub fn new() -> Self {
-        Self { jobs: Vec::new() }
+        Self {
+            inner: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     fn find_available_index(&self) -> usize {
         let mut index = 1;
-        while self.jobs.iter().any(|job| job.index == index) {
+        let jobs = self.inner.lock().unwrap();
+        while jobs.iter().any(|job| job.index == index) {
             index += 1;
         }
         index
     }
 
-    pub fn add_job(&mut self, pid: u32, command: String) {
+    pub fn add_job(&self, pid: u32, command: String) {
+        let mut jobs = self.inner.lock().unwrap();
         // 将当前任务变为上一个任务
-        for job in &mut self.jobs {
+        for job in jobs.iter_mut() {
             if job.is_current {
                 job.is_current = false;
                 job.is_previous = true;
@@ -81,63 +87,73 @@ impl JobManager {
         let index = self.find_available_index();
         let mut job = Job::new(pid, index, command, JobStatus::Continued);
         job.is_current = true;
-        self.jobs.push(job);
+        jobs.push(job);
         self.update_marks(index);
     }
 
-    pub fn remove_job(&mut self, pid: u32) {
-        if let Some(pos) = self.jobs.iter().position(|job| job.pid == pid) {
-            let was_current = self.jobs[pos].is_current;
-            self.jobs.remove(pos);
+    pub fn remove_job(&self, pid: u32) {
+        let mut jobs = self.inner.lock().unwrap();
+        if let Some(pos) = jobs.iter().position(|job| job.pid == pid) {
+            let was_current = jobs[pos].is_current;
+            jobs.remove(pos);
 
-            if was_current && !self.jobs.is_empty() {
+            if was_current && !jobs.is_empty() {
                 // 如果删除的是当前任务，将上一个任务提升为当前任务
-                if let Some(prev_job) = self.jobs.iter_mut().find(|job| job.is_previous) {
+                if let Some(prev_job) = jobs.iter_mut().find(|job| job.is_previous) {
                     prev_job.is_current = true;
                     prev_job.is_previous = false;
                 } else {
                     // 如果没有上一个任务，将最后一个任务设为当前任务
-                    let last_idx = self.jobs.len() - 1;
-                    self.jobs[last_idx].is_current = true;
+                    let last_idx = jobs.len() - 1;
+                    jobs[last_idx].is_current = true;
                 }
             }
         }
     }
 
-    pub fn fg(&mut self, index: Option<usize>) -> Option<Job> {
+    pub fn fg(&self, index: Option<usize>) -> Option<Job> {
+        let jobs = self.inner.lock().unwrap();
         let pos = match index {
-            Some(idx) => self.jobs.iter().position(|job| job.index == idx)?,
-            None => self.jobs.iter().position(|job| job.is_current)?,
+            Some(idx) => jobs.iter().position(|job| job.index == idx)?,
+            None => jobs.iter().position(|job| job.is_current)?,
         };
 
-        let job_index = self.jobs[pos].index;
-        self.jobs[pos].status = JobStatus::Continued;
+        let job_index = jobs[pos].index;
+        let mut jobs = self.inner.lock().unwrap();
+        jobs[pos].status = JobStatus::Continued;
 
         self.update_marks(job_index);
-        Some(self.jobs[pos].clone())
+        Some(jobs[pos].clone())
     }
 
-    pub fn bg(&mut self, index: usize) -> Option<Job> {
-        let pos = self.jobs.iter().position(|job| job.index == index)?;
-        let job_index = self.jobs[pos].index;
-        self.jobs[pos].status = JobStatus::Continued;
+    pub fn bg(&self, index: Option<usize>) -> Option<Job> {
+        let jobs = self.inner.lock().unwrap();
+        let pos = match index {
+            Some(idx) => jobs.iter().position(|job| job.index == idx)?,
+            None => jobs.iter().position(|job| job.is_current)?,
+        };
+        let job_index = jobs[pos].index;
+        let mut jobs = self.inner.lock().unwrap();
+        jobs[pos].status = JobStatus::Continued;
 
         self.update_marks(job_index);
-        Some(self.jobs[pos].clone())
+        Some(jobs[pos].clone())
     }
 
-    pub fn mark_suspended(&mut self, pid: u32) -> Option<Job> {
-        let job = self.jobs.iter_mut().find(|job| job.pid == pid)?;
+    pub fn mark_suspended(&self, pid: u32) -> Option<Job> {
+        let mut jobs = self.inner.lock().unwrap();
+        let job = jobs.iter_mut().find(|job| job.pid == pid)?;
         job.status = JobStatus::Suspended;
         Some(job.clone())
     }
 
     pub fn get_jobs(&self) -> Vec<Job> {
-        self.jobs.clone()
+        self.inner.lock().unwrap().clone()
     }
 
-    fn update_marks(&mut self, current_job_index: usize) {
-        for job in &mut self.jobs {
+    fn update_marks(&self, current_job_index: usize) {
+        let mut jobs = self.inner.lock().unwrap();
+        for job in jobs.iter_mut() {
             if job.index == current_job_index {
                 job.is_current = true;
                 job.is_previous = false;

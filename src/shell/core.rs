@@ -1,10 +1,13 @@
 use log::{debug, error, warn};
 use std::error::Error;
 use std::io::Write;
+use std::sync::Arc;
 
 use crate::shell::executor::Executor;
+use crate::shell::job_manager::JobManager;
 use crate::shell::parser::Parser;
 use crate::shell::readline::{ReadlineError, ReadlineManager};
+use crate::shell::scheduler::Scheduler;
 use crate::utils::config::Config;
 use crate::utils::theme::Theme;
 
@@ -12,14 +15,18 @@ pub struct Shell<'a> {
     theme: Theme,
     readline: ReadlineManager<'a>,
     executor: Executor,
+    scheduler: Arc<Scheduler>,
 }
 
 impl<'a> Shell<'a> {
     pub fn new(config: &'a Config) -> Self {
+        let scheduler = Arc::new(Scheduler::new());
+        let job_manager = Arc::new(JobManager::new());
         Self {
             theme: Theme::new(),
             readline: ReadlineManager::new(config),
-            executor: Executor::new(),
+            executor: Executor::new(Arc::clone(&scheduler), Arc::clone(&job_manager)),
+            scheduler,
         }
         // let theme_file = Theme::get_theme_file(config);
         // shell.variables.load_theme_variables(&theme_file);
@@ -50,6 +57,9 @@ impl<'a> Shell<'a> {
         loop {
             std::io::stdout().flush()?;
             let prompt = (self.theme.prompt_style)(self.theme.get_message("prompt"));
+
+            // 等待直到 shell 成为前台进程组
+            self.scheduler.wait_until_foreground();
 
             match self.readline.readline(&prompt) {
                 Ok(line) => {

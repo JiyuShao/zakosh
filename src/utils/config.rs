@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub name: String,
     pub logger_level: String,
+    pub logger_dir: PathBuf,
     pub theme: String,
     pub editor_mode: String,
     // paths
@@ -30,6 +31,7 @@ impl Config {
         Config {
             name: String::from("zako"),
             logger_level: String::from("info"),
+            logger_dir: config_dir.join("logs"),
             theme: String::from("default"),
             editor_mode: String::from("vi"),
             config_dir: config_dir.clone(),
