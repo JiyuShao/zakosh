@@ -61,11 +61,6 @@ impl Executor {
                                             trace!("Job {} suspended", pid);
                                             if let Some(job) = manager.mark_suspended(pid as u32) {
                                                 println!("\nJob {} suspended: {}", pid, job);
-                                                trace!(
-                                                    "Job {} suspended(mark_suspended success): {}",
-                                                    pid,
-                                                    job
-                                                );
                                             }
                                         } else if libc::WIFEXITED(status) {
                                             let exit_code = libc::WEXITSTATUS(status);
@@ -170,9 +165,12 @@ impl Executor {
                 libc::signal(libc::SIGTTOU, libc::SIG_DFL); // 当后台进程尝试写入终端时暂停进程
                 libc::signal(libc::SIGTTIN, libc::SIG_DFL); // 当后台进程尝试从终端读取输入时暂停进程
 
-                // 在子进程启动时就设置进程组
+                // 在子进程启动时立即设置进程组
                 let pid = libc::getpid();
-                libc::setpgid(pid, pid);
+                if libc::setpgid(pid, pid) < 0 {
+                    // 使用 0,0 让子进程成为自己的进程组长
+                    return Err(io::Error::last_os_error());
+                }
 
                 Ok(())
             });
@@ -193,12 +191,15 @@ impl Executor {
 
         #[cfg(unix)]
         unsafe {
-            // 为子进程单独设置进程组
-            libc::setpgid(pid as libc::pid_t, pid as libc::pid_t);
+            // 在父进程中也尝试设置子进程的进程组
+            // 这是为了处理竞态条件
+            let _ = libc::setpgid(pid as libc::pid_t, pid as libc::pid_t);
 
             // 将子进程设为前台进程组
             let shell_terminal = libc::STDIN_FILENO;
-            libc::tcsetpgrp(shell_terminal, pid as libc::pid_t);
+            if libc::tcsetpgrp(shell_terminal, pid as libc::pid_t) < 0 {
+                trace!("设置前台进程组失败: {}", io::Error::last_os_error());
+            }
             trace!("将子进程 {} 设为前台进程组", pid);
         }
         trace!("Job {} started", pid);
@@ -215,7 +216,8 @@ impl Executor {
                     .as_str(),
         );
 
-        trace!("Job {} added", pid);
+        // 暂停 shell，等待子进程运行完成或被放到后台
+        self.scheduler.pause();
 
         Ok(())
     }
@@ -324,7 +326,7 @@ impl Executor {
 
         let pid = job.pid;
 
-        // 暂停当前 shell
+        // 暂停当前 shell，等待子进程运行完成或被放到后台
         self.scheduler.pause();
 
         #[cfg(unix)]

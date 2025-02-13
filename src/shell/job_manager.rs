@@ -73,6 +73,7 @@ impl JobManager {
     }
 
     pub fn add_job(&self, pid: u32, command: String) {
+        let index = self.find_available_index();
         let mut jobs = self.inner.lock().unwrap();
         // 将当前任务变为上一个任务
         for job in jobs.iter_mut() {
@@ -84,11 +85,10 @@ impl JobManager {
             }
         }
 
-        let index = self.find_available_index();
         let mut job = Job::new(pid, index, command, JobStatus::Continued);
         job.is_current = true;
         jobs.push(job);
-        self.update_marks(index);
+        self.update_marks(&mut jobs, index);
     }
 
     pub fn remove_job(&self, pid: u32) {
@@ -112,31 +112,26 @@ impl JobManager {
     }
 
     pub fn fg(&self, index: Option<usize>) -> Option<Job> {
-        let jobs = self.inner.lock().unwrap();
+        let mut jobs = self.inner.lock().unwrap();
         let pos = match index {
             Some(idx) => jobs.iter().position(|job| job.index == idx)?,
             None => jobs.iter().position(|job| job.is_current)?,
         };
 
         let job_index = jobs[pos].index;
-        let mut jobs = self.inner.lock().unwrap();
         jobs[pos].status = JobStatus::Continued;
 
-        self.update_marks(job_index);
+        self.update_marks(&mut jobs, job_index);
         Some(jobs[pos].clone())
     }
 
     pub fn bg(&self, index: Option<usize>) -> Option<Job> {
-        let jobs = self.inner.lock().unwrap();
+        let mut jobs = self.inner.lock().unwrap();
         let pos = match index {
             Some(idx) => jobs.iter().position(|job| job.index == idx)?,
             None => jobs.iter().position(|job| job.is_current)?,
         };
-        let job_index = jobs[pos].index;
-        let mut jobs = self.inner.lock().unwrap();
         jobs[pos].status = JobStatus::Continued;
-
-        self.update_marks(job_index);
         Some(jobs[pos].clone())
     }
 
@@ -151,8 +146,7 @@ impl JobManager {
         self.inner.lock().unwrap().clone()
     }
 
-    fn update_marks(&self, current_job_index: usize) {
-        let mut jobs = self.inner.lock().unwrap();
+    fn update_marks(&self, jobs: &mut Vec<Job>, current_job_index: usize) {
         for job in jobs.iter_mut() {
             if job.index == current_job_index {
                 job.is_current = true;
