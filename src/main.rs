@@ -1,5 +1,8 @@
-use log::debug;
+#[macro_use]
+extern crate lazy_static;
+
 use crate::shell::Shell;
+use log::debug;
 
 use crate::utils::config::Config;
 use crate::utils::log::init_logger;
