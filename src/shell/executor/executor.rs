@@ -7,6 +7,7 @@ use std::{env, io};
 use super::variable::Variable;
 use crate::shell::job_manager::JobManager;
 use crate::shell::parser::ast::{Command as ShellCommand, Node};
+use crate::shell::shell::CommandResult;
 use crate::shell::signals;
 use crate::utils::path;
 
@@ -23,7 +24,7 @@ impl Executor {
         }
     }
 
-    pub fn execute(&mut self, node: Node) -> io::Result<()> {
+    pub fn execute(&mut self, node: Node) -> io::Result<CommandResult> {
         let mut pgid: i32 = 0;
         let mut fg_pids: Vec<i32> = Vec::new();
         let _ = match node {
@@ -32,14 +33,15 @@ impl Executor {
         };
 
         // 等待 fg 命令执行完毕
-        self.job_manager.wait_fg_job(pgid, &fg_pids);
+        let cmd_result = self.job_manager.wait_fg_job(pgid, &fg_pids);
 
+        // 恢复终端控制
         unsafe {
-            let gid = libc::getpgid(0);
-            signals::give_terminal_to(gid);
+            let shell_gid = libc::getpgid(0);
+            signals::give_terminal_to(shell_gid);
         }
 
-        Ok(())
+        Ok(cmd_result)
     }
 
     fn execute_pipeline(
@@ -120,7 +122,7 @@ impl Executor {
             Ok(nix::unistd::ForkResult::Child) => {
                 // 子进程
                 // 恢复子 shell 的 block 信号处理
-                signals::notice_block_signals();
+                signals::enable_signals();
 
                 // 设置子进程的进程组
                 let pid = unsafe {

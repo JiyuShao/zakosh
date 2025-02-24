@@ -1,12 +1,10 @@
 use std::fmt;
 
-use log::error;
-use nix::sys::wait::waitpid;
-use nix::sys::wait::WaitPidFlag as WF;
-use nix::sys::wait::WaitStatus as WS;
-use nix::unistd::Pid;
+use crate::shell::shell::CommandResult;
 
 use super::signals;
+use log::debug;
+use log::error;
 
 #[derive(Debug, Clone)]
 pub enum JobStatus {
@@ -189,34 +187,6 @@ impl JobManager {
         }
     }
 
-    pub fn waitpidx(&self, wpid: i32, block: bool) -> WaitStatus {
-        let options = if block {
-            Some(WF::WUNTRACED | WF::WCONTINUED)
-        } else {
-            Some(WF::WUNTRACED | WF::WCONTINUED | WF::WNOHANG)
-        };
-        match waitpid(Pid::from_raw(wpid), options) {
-            Ok(WS::Exited(pid, status)) => {
-                let pid = i32::from(pid);
-                WaitStatus::from_exited(pid, status)
-            }
-            Ok(WS::Stopped(pid, sig)) => {
-                let pid = i32::from(pid);
-                WaitStatus::from_stopped(pid, sig as i32)
-            }
-            Ok(WS::Continued(pid)) => {
-                let pid = i32::from(pid);
-                WaitStatus::from_continuted(pid)
-            }
-            Ok(WS::Signaled(pid, sig, _core_dumped)) => {
-                let pid = i32::from(pid);
-                WaitStatus::from_signaled(pid, sig as i32)
-            }
-            Ok(WS::StillAlive) => WaitStatus::empty(),
-            Err(e) => WaitStatus::from_error(e as i32),
-        }
-    }
-
     pub fn wait_fg_job(&mut self, gid: i32, pids: &[i32]) -> CommandResult {
         let mut cmd_result = CommandResult::new();
         let mut count_waited = 0;
@@ -227,7 +197,7 @@ impl JobManager {
         let pid_last = pids.last().unwrap();
 
         loop {
-            let ws = self.waitpidx(-1, true);
+            let ws = signals::waitpidx(-1, true);
             // here when we calling waitpidx(), all signals should have
             // been masked. There should no errors (ECHILD/EINTR etc) happen.
             if ws.is_error() {
@@ -248,6 +218,7 @@ impl JobManager {
             }
 
             if ws.is_exited() {
+                debug!("前台进程 exited: {}", pid);
                 if is_a_fg_child {
                     self.mark_job_as_done(gid, pid, JobStatus::Done);
                 } else {
@@ -255,6 +226,7 @@ impl JobManager {
                     signals::insert_reap_map(pid, status);
                 }
             } else if ws.is_stopped() {
+                debug!("前台进程 stopped: {}", pid);
                 if is_a_fg_child {
                     // for stop signal of fg job (current job)
                     // i.e. Ctrl-Z is pressed on the fg job
@@ -265,11 +237,13 @@ impl JobManager {
                     self.mark_job_stopped(0, pid, false);
                 }
             } else if ws.is_continued() {
+                debug!("前台进程 continued: {}", pid);
                 if !is_a_fg_child {
                     signals::insert_cont_map(pid);
                 }
                 continue;
             } else if ws.is_signaled() {
+                debug!("前台进程 signaled: {}", pid);
                 if is_a_fg_child {
                     self.mark_job_as_done(gid, pid, JobStatus::Killed);
                 } else {
@@ -287,153 +261,5 @@ impl JobManager {
             }
         }
         cmd_result
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, Default)]
-pub struct CommandResult {
-    pub gid: i32,
-    pub status: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-impl CommandResult {
-    pub fn new() -> CommandResult {
-        CommandResult {
-            gid: 0,
-            status: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-        }
-    }
-
-    pub fn from_status(gid: i32, status: i32) -> CommandResult {
-        CommandResult {
-            gid,
-            status,
-            stdout: String::new(),
-            stderr: String::new(),
-        }
-    }
-
-    pub fn error() -> CommandResult {
-        CommandResult {
-            gid: 0,
-            status: 1,
-            stdout: String::new(),
-            stderr: String::new(),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct WaitStatus(i32, i32, i32);
-
-impl WaitStatus {
-    pub fn from_exited(pid: i32, status: i32) -> Self {
-        WaitStatus(pid, 0, status)
-    }
-
-    pub fn from_signaled(pid: i32, sig: i32) -> Self {
-        WaitStatus(pid, 1, sig)
-    }
-
-    pub fn from_stopped(pid: i32, sig: i32) -> Self {
-        WaitStatus(pid, 2, sig)
-    }
-
-    pub fn from_continuted(pid: i32) -> Self {
-        WaitStatus(pid, 3, 0)
-    }
-
-    pub fn from_others() -> Self {
-        WaitStatus(0, 9, 9)
-    }
-
-    pub fn from_error(errno: i32) -> Self {
-        WaitStatus(0, 255, errno)
-    }
-
-    pub fn empty() -> Self {
-        WaitStatus(0, 0, 0)
-    }
-
-    pub fn is_error(&self) -> bool {
-        self.1 == 255
-    }
-
-    pub fn is_others(&self) -> bool {
-        self.1 == 9
-    }
-
-    pub fn is_signaled(&self) -> bool {
-        self.1 == 1
-    }
-
-    pub fn get_errno(&self) -> nix::Error {
-        nix::Error::from_raw(self.2)
-    }
-
-    pub fn is_exited(&self) -> bool {
-        self.0 != 0 && self.1 == 0
-    }
-
-    pub fn is_stopped(&self) -> bool {
-        self.1 == 2
-    }
-
-    pub fn is_continued(&self) -> bool {
-        self.1 == 3
-    }
-
-    pub fn get_pid(&self) -> i32 {
-        self.0
-    }
-
-    fn _get_signaled_status(&self) -> i32 {
-        self.2 + 128
-    }
-
-    pub fn get_signal(&self) -> i32 {
-        self.2
-    }
-
-    pub fn get_name(&self) -> String {
-        if self.is_exited() {
-            "Exited".to_string()
-        } else if self.is_stopped() {
-            "Stopped".to_string()
-        } else if self.is_continued() {
-            "Continued".to_string()
-        } else if self.is_signaled() {
-            "Signaled".to_string()
-        } else if self.is_others() {
-            "Others".to_string()
-        } else if self.is_error() {
-            "Error".to_string()
-        } else {
-            format!("unknown: {}", self.2)
-        }
-    }
-
-    pub fn get_status(&self) -> i32 {
-        if self.is_exited() {
-            self.2
-        } else {
-            self._get_signaled_status()
-        }
-    }
-}
-
-impl fmt::Debug for WaitStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut formatter = f.debug_struct("WaitStatus");
-        formatter.field("pid", &self.0);
-        let name = self.get_name();
-        formatter.field("name", &name);
-        formatter.field("ext", &self.2);
-        formatter.finish()
     }
 }

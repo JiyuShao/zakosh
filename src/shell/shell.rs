@@ -31,9 +31,11 @@ impl<'a> Shell<'a> {
         debug!("初始化 ZakoShell...");
 
         // 忽略 shell block 信号，如 Ctrl-C, Ctrl-D 等
-        signals::ignore_block_signals();
+        signals::disable_signals();
         // 设置子进程信号处理，并存起子进程 pid 状态
         signals::setup_sigchld_handler();
+        // 阻塞子进程信号，否则会造成子进程信号处理失败
+        signals::block_child_signals();
 
         self.readline.load_history()?;
 
@@ -59,8 +61,17 @@ impl<'a> Shell<'a> {
             std::io::stdout().flush()?;
             let prompt = (self.theme.prompt_style)(self.theme.get_message("prompt"));
 
+            // FIXME: in `rl.read_line()` below, there is lots of Rust code,
+            // which may not be async-signal-safe. see follow links for details:
+            // - https://ldpreload.com/blog/signalfd-is-useless
+            // - https://man7.org/linux/man-pages/man7/signal-safety.7.html
+            signals::unblock_child_signals();
+
             match self.readline.readline(&prompt) {
                 Ok(line) => {
+                    // 阻塞信号，否则会造成子进程信号处理失败
+                    signals::block_child_signals();
+
                     if line.trim() == "exit" {
                         debug!("退出 ZakoShell...");
                         println!(
@@ -97,6 +108,8 @@ impl<'a> Shell<'a> {
                     }
                 },
             }
+            // 阻塞信号，否则会造成子进程信号处理失败
+            signals::block_child_signals();
         }
         Ok(())
     }
@@ -164,4 +177,42 @@ impl<'a> Shell<'a> {
     //     }
     //     Ok(())
     // }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default)]
+pub struct CommandResult {
+    pub gid: i32,
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl CommandResult {
+    pub fn new() -> CommandResult {
+        CommandResult {
+            gid: 0,
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    pub fn from_status(gid: i32, status: i32) -> CommandResult {
+        CommandResult {
+            gid,
+            status,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    pub fn error() -> CommandResult {
+        CommandResult {
+            gid: 0,
+            status: 1,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
 }
